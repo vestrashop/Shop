@@ -1,8 +1,8 @@
 {
-  "name": "shop",
+  "name": "rober-tienda",
   "main": "worker.js",
   "compatibility_date": "2025-09-01",
   "r2_buckets": [
-    { "binding": "BUCKET", "bucket_name": "shop" }
+    { "binding": "BUCKET", "bucket_name": "rober-tienda" }
   ]
 }
