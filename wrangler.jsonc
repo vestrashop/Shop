@@ -1,5 +1,5 @@
 {
-  "tienda": "rober-tienda",
+  "name": "vestrashop",
   "main": "worker.js",
   "compatibility_date": "2025-09-01",
   "r2_buckets": [
