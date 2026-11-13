@@ -31,6 +31,70 @@ function authed(req, env) {
   return same(d.slice(0, i).toLowerCase(), env.ADMIN_USER.toLowerCase()) && same(d.slice(i + 1), env.ADMIN_PASS);
 }
 
+// ---------- conexión con PuntoPOS ----------
+async function posToken(env) {
+  const k = await crypto.subtle.importKey("raw", new TextEncoder().encode(env.ADMIN_USER.toLowerCase() + ":" + env.ADMIN_PASS), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", k, new TextEncoder().encode("puntopos-v1"));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+const normName = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+const cleanCat = (s) => String(s || "").replace(/^\s*\d+\s*[).\-]\s*/, "").replace(/[^\p{L}\p{N} ]/gu, "").trim();
+async function posApi(op, request, env, B) {
+  if (!env.ADMIN_USER || !env.ADMIN_PASS) return J({ error: "La tienda no tiene usuario de administración configurado" }, 500);
+  let body = {};
+  try { body = await request.json(); } catch (e) { }
+  if (op === "login") {
+    const u = String(body.user || "").trim(), p = String(body.pass || "");
+    if (!same(u.toLowerCase(), env.ADMIN_USER.toLowerCase()) || !same(p, env.ADMIN_PASS)) { await sleep(700); return J({ error: "Usuario o contraseña de la tienda incorrectos" }, 401); }
+    return J({ token: await posToken(env) });
+  }
+  const tok = (request.headers.get("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+  if (!tok || !same(tok, await posToken(env))) { await sleep(700); return J({ error: "La sesión con la tienda venció. Conectá de nuevo." }, 401); }
+  if (op === "ping") return J({ ok: 1 });
+  if (op !== "sync") return J({ error: "no encontrado" }, 404);
+  const items = Array.isArray(body.items) ? body.items.slice(0, 5000) : null;
+  if (!items) return J({ error: "datos inválidos" }, 400);
+  const o = await B.get("state.json");
+  if (!o) return J({ error: "La tienda todavía no tiene datos guardados. Entrá una vez al panel admin y guardá." }, 409);
+  const st = await o.json();
+  if (!Array.isArray(st.prods)) st.prods = [];
+  const cats = Array.isArray(st.cats) ? st.cats : [];
+  const byPos = new Map(), byName = new Map();
+  for (const p of st.prods) { if (p.pos) byPos.set(p.pos, p); const n = normName(p.n); if (n && !byName.has(n)) byName.set(n, p); }
+  let updated = 0, created = 0;
+  const num = (x) => { const v = Math.round(Number(x)); return isFinite(v) && v > 0 ? v : 0; };
+  for (const it of items) {
+    if (!it || typeof it.id !== "string" || !it.name) continue;
+    const vars = Array.isArray(it.vars) ? it.vars.filter((v) => v && String(v.name || "").trim()) : [];
+    let p = byPos.get(it.id) || byName.get(normName(it.name));
+    if (p && p.pos && p.pos !== it.id) p = null;
+    const isNew = !p;
+    if (isNew) {
+      const pc = cleanCat(it.cat), hit = cats.find((c) => normName(c) === normName(pc));
+      p = { id: "p" + Date.now() + "" + created, n: String(it.name).slice(0, 200), c: hit || cats[0] || "", p: 0, po: 0, pt: 0, col: "", sz: "", st: 10, nw: 1, h: 1, pm: 0, lq: 0, dst: 0, mv: 0, tr: 0, tiers: [], d: "", im: [] };
+      st.prods.push(p); created++;
+    } else updated++;
+    p.pos = it.id;
+    const base = num(it.price);
+    if (vars.length) {
+      p.sz = vars.map((v) => String(v.name).trim()).join(", ");
+      const prices = [...new Set(vars.map((v) => num(v.price) || base))];
+      if (prices.length > 1) {
+        const tiers = prices.map((pp) => ({ sz: vars.filter((v) => (num(v.price) || base) === pp).map((v) => String(v.name).trim()).join(", "), p: pp, pt: 0 }));
+        if (JSON.stringify((p.tiers || []).map((t) => [t.sz, t.p])) !== JSON.stringify(tiers.map((t) => [t.sz, t.p]))) p.tiers = tiers;
+        p.tr = 1; p.p = Math.min(...prices);
+      } else { p.tr = 0; if (p.p !== prices[0]) { p.p = prices[0]; p.pt = 0; } }
+    } else if (base && p.p !== base) { p.tr = 0; p.p = base; p.pt = 0; }
+    if (p.po && p.po <= p.p) p.po = 0;
+    if (it.track) p.st = Math.max(0, Math.round(Number(it.stock) || 0));
+    if (!isNew) p.h = it.visible === false ? 1 : 0;
+    else if (it.visible === false) p.h = 1;
+  }
+  st.posSync = { at: Date.now(), store: String(body.store || "").slice(0, 80) };
+  await B.put("state.json", JSON.stringify(st), { httpMetadata: { contentType: "application/json" } });
+  return J({ ok: 1, updated, created });
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -66,6 +130,8 @@ export default {
       if (!o) return new Response("", { status: 404 });
       return new Response(o.body, { headers: { "content-type": (o.httpMetadata && o.httpMetadata.contentType) || "image/jpeg", "cache-control": "public, max-age=31536000, immutable", "x-content-type-options": "nosniff" } });
     }
+
+    if (parts[0] === "pos" && m === "POST") return await posApi(parts[1] || "", request, env, B);
 
     const a = authed(request, env);
     if (a === null) return J({ error: "sin configurar" }, 500);
