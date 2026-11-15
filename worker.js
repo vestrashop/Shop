@@ -87,7 +87,7 @@ async function posApi(op, request, env, B) {
     const base = num(it.price);
     if (Array.isArray(it.sizes) || Array.isArray(it.colors)) {
       const sz = (it.sizes || []).map((x) => String(x).trim()).filter(Boolean), co = (it.colors || []).map((x) => String(x).trim()).filter(Boolean);
-      p.sz = sz.join(", "); p.col = co.join(", ");
+      if (sz.length) p.sz = sz.join(", "); if (co.length) p.col = co.join(", ");
       const tp = it.tp && typeof it.tp === "object" ? it.tp : {};
       const pz = sz.map((z) => num(tp[z]) || base), prices = [...new Set(pz)];
       if (sz.length && prices.length > 1) {
