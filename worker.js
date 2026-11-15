@@ -85,7 +85,17 @@ async function posApi(op, request, env, B) {
     const pc = String(it.cat || "").trim().slice(0, 80);
     if (pc) { const hit = cats.find((c) => normName(c) === normName(pc)); if (!hit) cats.push(pc); p.c = hit || pc; }
     const base = num(it.price);
-    if (vars.length) {
+    if (Array.isArray(it.sizes) || Array.isArray(it.colors)) {
+      const sz = (it.sizes || []).map((x) => String(x).trim()).filter(Boolean), co = (it.colors || []).map((x) => String(x).trim()).filter(Boolean);
+      p.sz = sz.join(", "); p.col = co.join(", ");
+      const tp = it.tp && typeof it.tp === "object" ? it.tp : {};
+      const pz = sz.map((z) => num(tp[z]) || base), prices = [...new Set(pz)];
+      if (sz.length && prices.length > 1) {
+        const tiers = prices.map((pp) => ({ sz: sz.filter((z, k) => pz[k] === pp).join(", "), p: pp, pt: 0 }));
+        if (JSON.stringify((p.tiers || []).map((t) => [t.sz, t.p])) !== JSON.stringify(tiers.map((t) => [t.sz, t.p]))) p.tiers = tiers;
+        p.tr = 1; p.p = Math.min(...prices);
+      } else if (base && p.p !== base) { p.tr = 0; p.p = base; p.pt = 0; } else if (base) p.tr = 0;
+    } else if (vars.length) {
       p.sz = vars.map((v) => String(v.name).trim()).join(", ");
       const prices = [...new Set(vars.map((v) => num(v.price) || base))];
       if (prices.length > 1) {
