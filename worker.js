@@ -112,7 +112,8 @@ async function posApi(op, request, env, B) {
   st.cats = cats.filter((c) => usedNow.has(c) || !usedBefore.has(c));
   st.posSync = { at: Date.now(), store: String(body.store || "").slice(0, 80) };
   await B.put("state.json", JSON.stringify(st), { httpMetadata: { contentType: "application/json" } });
-  return J({ ok: 1, updated, created });
+  const linked = st.prods.filter((p) => p.pos), pub = linked.filter((p) => !p.h).length, wcol = linked.filter((p) => p.col).length;
+  return J({ ok: 1, updated, created, pub, wcol, total: st.prods.length });
 }
 
 export default {
@@ -165,6 +166,26 @@ export default {
       try { b = JSON.parse(txt); } catch (e) { return J({ error: "datos inválidos" }, 400); }
       if (!b || !Array.isArray(b.prods)) return J({ error: "datos inválidos" }, 400);
       delete b.auth;
+      // si PuntoPOS sincronizó mientras el panel estaba abierto, no se pierde lo que mandó
+      try {
+        const o = await B.get("state.json");
+        const cur = o ? await o.json() : null;
+        const ca = cur && cur.posSync && cur.posSync.at || 0, ba = b.posSync && b.posSync.at || 0;
+        if (cur && ca > ba && Array.isArray(cur.prods)) {
+          const PF = ["p", "pt", "tr", "tiers", "sz", "col", "st", "h", "c", "pos"];
+          const byId = new Map(b.prods.map((x) => [x.id, x]));
+          const del = new Set(Array.isArray(b._delIds) ? b._delIds : []);
+          for (const cp of cur.prods) {
+            if (!cp.pos) continue;
+            const bp = byId.get(cp.id);
+            if (bp) PF.forEach((k) => { if (cp[k] !== undefined) bp[k] = cp[k]; });
+            else if (!del.has(cp.id) && !cur._seen) b.prods.push(cp);
+          }
+          const cats = Array.isArray(b.cats) ? b.cats : (b.cats = []);
+          (cur.cats || []).forEach((c) => { if (!cats.includes(c)) cats.push(c); });
+          b.posSync = cur.posSync;
+        }
+      } catch (e) { }
       await B.put("state.json", JSON.stringify(b), { httpMetadata: { contentType: "application/json" } });
       return J({ ok: 1 });
     }
