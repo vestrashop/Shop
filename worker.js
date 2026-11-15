@@ -106,8 +106,7 @@ async function posApi(op, request, env, B) {
     } else if (base && p.p !== base) { p.tr = 0; p.p = base; p.pt = 0; }
     if (p.po && p.po <= p.p) p.po = 0;
     if (it.track) p.st = Math.max(0, Math.round(Number(it.stock) || 0));
-    if (!isNew) p.h = it.visible === false ? 1 : 0;
-    else if (it.visible === false) p.h = 1;
+    p.h = it.visible === false ? 1 : 0;
   }
   const usedNow = new Set(st.prods.map((p) => p.c).filter(Boolean));
   st.cats = cats.filter((c) => usedNow.has(c) || !usedBefore.has(c));
