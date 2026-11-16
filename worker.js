@@ -108,12 +108,18 @@ async function posApi(op, request, env, B) {
     if (it.track) p.st = Math.max(0, Math.round(Number(it.stock) || 0));
     p.h = it.visible === false ? 1 : 0;
   }
+  let removed = 0;
+  if (body.full && Array.isArray(body.keep)) {
+    const keep = new Set(body.keep.map(String)), hide = new Set((Array.isArray(body.hide) ? body.hide : []).map(String));
+    const sent = new Set(items.map((x) => x && x.id));
+    st.prods = st.prods.filter((p) => { if (!p.pos) return true; if (!keep.has(p.pos)) { removed++; return false; } if (hide.has(p.pos) && !sent.has(p.pos)) p.h = 1; return true; });
+  }
   const usedNow = new Set(st.prods.map((p) => p.c).filter(Boolean));
   st.cats = cats.filter((c) => usedNow.has(c) || !usedBefore.has(c));
   st.posSync = { at: Date.now(), store: String(body.store || "").slice(0, 80) };
   await B.put("state.json", JSON.stringify(st), { httpMetadata: { contentType: "application/json" } });
   const linked = st.prods.filter((p) => p.pos), pub = linked.filter((p) => !p.h).length, wcol = linked.filter((p) => p.col).length;
-  return J({ ok: 1, updated, created, pub, wcol, total: st.prods.length });
+  return J({ ok: 1, updated, created, removed, pub, wcol, total: st.prods.length });
 }
 
 export default {
