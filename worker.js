@@ -109,13 +109,24 @@ async function posApi(op, request, env, B) {
     p.h = it.visible === false ? 1 : 0;
   }
   let removed = 0;
-  if (body.full && Array.isArray(body.keep)) {
+  const delIds = [];
+  if (body.full && Array.isArray(body.keep) && body.keep.length) {
+    // la página queda con los mismos artículos que PuntoPOS
     const keep = new Set(body.keep.map(String)), hide = new Set((Array.isArray(body.hide) ? body.hide : []).map(String));
-    const sent = new Set(items.map((x) => x && x.id));
-    st.prods = st.prods.filter((p) => { if (!p.pos) return true; if (!keep.has(p.pos)) { removed++; return false; } if (hide.has(p.pos) && !sent.has(p.pos)) p.h = 1; return true; });
+    const sent = new Set(items.map((x) => x && x.id)), byName = new Map();
+    (Array.isArray(body.names) ? body.names : []).forEach((x) => { if (Array.isArray(x)) { const k = normName(x[1]); if (k && !byName.has(k)) byName.set(k, String(x[0])); } });
+    const used = new Set(st.prods.map((p) => p.pos).filter(Boolean));
+    st.prods = st.prods.filter((p) => {
+      if (!p.pos && body.full === 2) { const id = byName.get(normName(p.n)); if (id && !used.has(id)) { p.pos = id; used.add(id); } }
+      if (!p.pos) { if (body.full === 2) { removed++; delIds.push(p.id); return false; } return true; }
+      if (!keep.has(p.pos)) { removed++; delIds.push(p.id); return false; }
+      if (hide.has(p.pos) && !sent.has(p.pos)) p.h = 1;
+      return true;
+    });
   }
   const usedNow = new Set(st.prods.map((p) => p.c).filter(Boolean));
   st.cats = cats.filter((c) => usedNow.has(c) || !usedBefore.has(c));
+  if (delIds.length) st.posDel = (Array.isArray(st.posDel) ? st.posDel : []).concat(delIds).slice(-3000);
   st.posSync = { at: Date.now(), store: String(body.store || "").slice(0, 80) };
   await B.put("state.json", JSON.stringify(st), { httpMetadata: { contentType: "application/json" } });
   const linked = st.prods.filter((p) => p.pos), pub = linked.filter((p) => !p.h).length, wcol = linked.filter((p) => p.col).length;
@@ -180,7 +191,9 @@ export default {
         if (cur && ca > ba && Array.isArray(cur.prods)) {
           const PF = ["p", "pt", "tr", "tiers", "sz", "col", "st", "h", "c", "pos"];
           const byId = new Map(b.prods.map((x) => [x.id, x]));
-          const del = new Set(Array.isArray(b._delIds) ? b._delIds : []);
+          const del = new Set(Array.isArray(cur.posDel) ? cur.posDel : []);
+          b.prods = b.prods.filter((x) => !del.has(x.id));
+          b.posDel = cur.posDel;
           for (const cp of cur.prods) {
             if (!cp.pos) continue;
             const bp = byId.get(cp.id);
